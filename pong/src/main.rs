@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::ops::Deref;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
@@ -9,7 +8,6 @@ use mos6502::memory::Bus;
 use mos6502::mos6502::Mos6502;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
-use sdl2::pixels::Color;
 use sdl2::pixels::PixelFormatEnum;
 use structopt::StructOpt;
 
@@ -19,40 +17,110 @@ enum MemoryMap {
   Rom,
 }
 
-const WIDTH: usize = 320;
-const HEIGHT: usize = 240;
+const WIDTH: usize = 240;
+const HEIGHT: usize = 192;
+
+enum DisplayPort {
+  PortX = 0,
+  PortY = 1,
+  PortColor = 2,
+  PortCommand = 3,
+}
+
+impl DisplayPort {
+  fn from_u16(val: u16) -> Self {
+    match val {
+      0 => DisplayPort::PortX,
+      1 => DisplayPort::PortY,
+      2 => DisplayPort::PortColor,
+      3 => DisplayPort::PortCommand,
+      _ => panic!("invalid display port"),
+    }
+  }
+}
+
+enum DisplayCommand {
+  Nop = 0,
+  Draw = 1,
+  Clear = 2,
+  Flush = 3,
+}
+
+impl DisplayCommand {
+  fn from_u8(val: u8) -> Self {
+    match val {
+      0 => DisplayCommand::Nop,
+      1 => DisplayCommand::Draw,
+      2 => DisplayCommand::Clear,
+      3 => DisplayCommand::Flush,
+      _ => panic!("invalid display command"),
+    }
+  }
+}
 
 struct DisplayBuffer {
-  // each pixel is 1 byte: 0x1 = white, 0x0 = black
   pub buffer: [u8; WIDTH * HEIGHT],
+  port_x: u8,
+  port_y: u8,
+  port_color: u8,
+  port_command: u8,
+  was_updated: bool,
 }
 
 impl DisplayBuffer {
   fn new() -> Self {
     let buffer = [0; WIDTH * HEIGHT];
-    Self { buffer }
+    Self {
+      buffer,
+      port_x: 0,
+      port_y: 0,
+      port_color: 0,
+      port_command: 0,
+      was_updated: false,
+    }
   }
 
   fn read8(&self, address: u16) -> u8 {
-    // address points at a block of 8 pixels
-    // each pixel is 1 byte: 0xff = white, 0x00 = black
-    // LSB is the leftmost pixel
-    let block = address as usize * 8;
-    let mut val = 0;
-    for i in 0..8 {
-      val |= (self.buffer[block + i] & 0x1) << i;
-    }
-    val
+    panic!("cannot read from display buffer")
   }
 
   fn write8(&mut self, val: u8, address: u16) {
-    let block = address as usize * 8;
-    for i in 0..8 {
-      let pixel_value = (val >> i) & 0x1;
-      let rgb332 = if pixel_value == 0 { 0x00 } else { 0xff };
-
-      self.buffer[block + i] = rgb332;
+    match DisplayPort::from_u16(address) {
+      DisplayPort::PortX => self.port_x = val,
+      DisplayPort::PortY => self.port_y = val,
+      DisplayPort::PortColor => self.port_color = val,
+      DisplayPort::PortCommand => self.port_command = val,
     }
+
+    match DisplayCommand::from_u8(self.port_command) {
+      DisplayCommand::Draw => self.draw(),
+      DisplayCommand::Flush => self.was_updated = true,
+      DisplayCommand::Clear => self.clear(),
+      _ => {}
+    }
+
+    self.port_command = 0;
+  }
+
+  fn draw(&mut self) {
+    let x = self.port_x as usize;
+    let y = self.port_y as usize;
+    let color = self.port_color;
+    self.buffer[y * WIDTH + x] = color;
+  }
+
+  fn clear(&mut self) {
+    self.buffer = [0; WIDTH * HEIGHT];
+  }
+
+  fn flush(&mut self) {
+    self.was_updated = true;
+  }
+
+  fn was_updated(&mut self) -> bool {
+    let result = self.was_updated;
+    self.was_updated = false;
+    result
   }
 }
 
@@ -145,28 +213,14 @@ fn main() {
   machine.debugger().verbose(args.verbose);
   if args.debug {
     machine.debugger().enable();
+    machine.debugger().watch_memory_range(0..=5, |mem| {
+      println!("watched memory range: {:?}", mem);
+    });
   }
-
-  // for y in 0..HEIGHT {
-  //   display_buffer
-  //     .borrow_mut()
-  //     .write8(0x01, ((WIDTH / 8) * y) as u16);
-  //   display_buffer
-  //     .borrow_mut()
-  //     .write8(0x80, ((WIDTH / 8) * y + ((WIDTH - 1) / 8)) as u16);
-  // }
-
-  // for x in (0..WIDTH).step_by(8) {
-  //   display_buffer.borrow_mut().write8(0xff, (x / 8) as u16);
-  //   let y = HEIGHT - 1;
-  //   display_buffer
-  //     .borrow_mut()
-  //     .write8(0xff, (x / 8 + (WIDTH / 8) * y) as u16);
-  // }
 
   let sdl_context = sdl2::init().unwrap();
   let video_subsystem = sdl_context.video().unwrap();
-  let scale = 2;
+  let scale = 4;
 
   let window = video_subsystem
     .window("pong", WIDTH as u32 * scale, HEIGHT as u32 * scale)
@@ -179,17 +233,8 @@ fn main() {
   let mut texture = creator
     .create_texture_target(PixelFormatEnum::RGB332, WIDTH as u32, HEIGHT as u32)
     .unwrap();
-
-  texture
-    .update(None, &display_buffer.borrow().buffer, WIDTH)
-    .unwrap();
-
   canvas.copy(&texture, None, None).unwrap();
-  // canvas.present();
 
-  // canvas.set_draw_color(Color::RGB(0, 255, 255));
-  // canvas.clear();
-  // canvas.present();
   let mut event_pump = sdl_context.event_pump().unwrap();
   let mut i = 0;
   'running: loop {
@@ -205,16 +250,16 @@ fn main() {
       }
     }
 
-    // if i > 5 {
-    //   break;
-    // }
-
     machine.tick();
 
-    canvas.clear();
-    canvas.copy(&texture, None, None).unwrap();
-    canvas.present();
+    if display_buffer.borrow_mut().was_updated() {
+      texture
+        .update(None, &display_buffer.borrow().buffer, WIDTH)
+        .unwrap();
+      canvas.copy(&texture, None, None).unwrap();
+      canvas.present();
 
-    ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
+      ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 120)); // 120 fps
+    }
   }
 }
