@@ -19,21 +19,28 @@ RectH = $5
 VelocityX = $6
 VelocityY = $7
 
+param1 = $f0
+param2 = $f1
+param3 = $f2
+param4 = $f3
+
 	.org $a580
 
+; ----------------------------------------
 reset:
     lda #1
     sta RectX
     lda #1
     sta RectY
-    lda #10
-    sta RectW
-    lda #10
-    sta RectH
-    lda #16
-    sta VelocityX
     lda #5
+    sta RectW
+    lda #5
+    sta RectH
+    lda #3
+    sta VelocityX
+    lda #3
     sta VelocityY
+; ----------------------------------------
 
 loop:
     lda #SCREEN_COMMAND_CLEAR
@@ -64,6 +71,10 @@ putpixel:
     rts
 ; ----------------------------------------
 
+; const param1 - x
+; const param2 - y
+; const param3 - width
+; const param4 - height
 draw_rect:
     pha
 
@@ -98,58 +109,84 @@ end_loop_x:
     rts
 ; ----------------------------------------
 
+; mut param1 - current position
+; mut param2 - velocity
+; const param3 - size
+; const param4 - max value
+
+advance_and_check:
+    pha
+    lda param1 ; current position
+    clc
+    adc param2 ; velocity
+    sta param1
+
+    ; check if we hit the edge
+    adc param3 ; rectangle dimension (width or height)
+    cmp param4 ; screen limit (WIDTH or HEIGHT)
+    bcc check_pos ; if we didn't hit the edge, check if we went below zero. otherwise, fix the position
+
+fix_pos:
+    sec
+    lda #0
+    sbc param2 ; negate the velocity
+    sta param2 ; store the negated velocity
+    adc param1 ; add the negated velocity to the current position
+    sta param1 ; store the new position
+    jmp end
+
+check_pos:
+    ; since positions are unsigned, we can't just check if it's less than 0
+    ; instead, we check if it's greater than the max value, and if it is, fix it
+    lda param4 ; screen limit (WIDTH or HEIGHT)
+    cmp param1
+    bcc fix_pos
+
+end:
+    pla
+    rts
+; ----------------------------------------
+
 advance_rect:
     pha
 
+    ; advance x position and check for collisions
     lda RectX
-    clc
-    adc VelocityX
-    sta RectX
-    adc RectW
-    cmp #WIDTH
-    bcc check_x_pos
-
-fix_x_pos:
-    sec
-    lda #0
-    sbc VelocityX
-    sta VelocityX
-    adc RectX
-    sta RectX
-    jmp check_y
-
-check_x_pos:
+    sta param1
+    lda VelocityX
+    sta param2
+    lda RectW
+    sta param3
     lda #WIDTH
-    cmp RectX
-    bcc fix_x_pos
+    sta param4
 
-check_y:
+    jsr advance_and_check
+
+    lda param1
+    sta RectX
+    lda param2
+    sta VelocityX
+
+    ; advance y position and check for collisions
     lda RectY
-    clc
-    adc VelocityY
-    sta RectY
-    adc RectH
-    cmp #HEIGHT
-    bcc check_y_pos
-
-fix_y_pos:
-    sec
-    lda #0
-    sbc VelocityY
-    sta VelocityY
-    adc RectY
-    sta RectY
-    jmp check_end
-
-check_y_pos:
+    sta param1
+    lda VelocityY
+    sta param2
+    lda RectH
+    sta param3
     lda #HEIGHT
-    cmp RectY
-    bcc fix_y_pos
+    sta param4
 
-check_end:
+    jsr advance_and_check
+
+    lda param1
+    sta RectY
+    lda param2
+    sta VelocityY
 
     pla
     rts
+; ----------------------------------------
 
 	.org $fffc
 	.word reset
