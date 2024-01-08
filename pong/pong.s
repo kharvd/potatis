@@ -46,6 +46,15 @@ loop:
     lda #SCREEN_COMMAND_CLEAR
     sta SCREEN_COMMAND
 
+    lda RectX
+    sta param1
+    lda RectY
+    sta param2
+    lda RectW
+    sta param3
+    lda RectH
+    sta param4
+
     jsr draw_rect
 
     lda #SCREEN_COMMAND_FLUSH
@@ -75,38 +84,42 @@ putpixel:
 ; const param2 - y
 ; const param3 - width
 ; const param4 - height
+; draw_rect: Draws a rectangle on the screen
 draw_rect:
     pha
 
-    lda RectX
+    lda param1 ; x
     sta DrawX
+; loop_x: Loops through the width of the rectangle
 loop_x:
     sec
-    sbc RectX
-    cmp RectW
-    beq end_loop_x
+    sbc param1 ; x
+    cmp param3 ; width
+    bcs end_loop_x
 
-    lda RectY
+    lda param2 ; y
     sta DrawY
+; loop_y: Loops through the height of the rectangle
 loop_y:
     sec
-    sbc RectY
-    cmp RectH
-    beq end_loop_y
+    sbc param2 ; y
+    cmp param4 ; height
+    bcs end_loop_y
 
-    jsr putpixel
+    jsr putpixel ; Draws a pixel at the current x, y position
+
     inc DrawY
     lda DrawY
-    jmp loop_y
+    jmp loop_y 
 end_loop_y:
     
-    inc DrawX
+    inc DrawX 
     lda DrawX
-    jmp loop_x
+    jmp loop_x 
 end_loop_x:
 
     pla
-    rts
+    rts ; Returns from the subroutine
 ; ----------------------------------------
 
 ; mut param1 - current position
